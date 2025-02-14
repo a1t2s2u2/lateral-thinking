@@ -148,6 +148,11 @@ def process_regenerate():
     }
     st.session_state.regenerate_done = True
 
+def process_final_answer(final_answer, problem_id, user_id, problem_answer):
+    # 最終回答のチェック処理を実行し、結果をチャット履歴に登録
+    result = check_final_answer_via_api(final_answer, problem_answer)
+    insert_chat_history(problem_id, user_id, f"回答提出: {final_answer}", result)
+
 ########################################
 # UI描画関数
 ########################################
@@ -163,7 +168,7 @@ def display_sidebar(cursor, conn):
                 conn.commit()
                 st.session_state.user_id = cursor.lastrowid
                 st.session_state.user_name = user_name.strip()
-                st.experimental_rerun()
+                st.rerun()
     else:
         st.sidebar.info(f"ようこそ、{st.session_state.user_name}さん！")
     st.sidebar.markdown("---")
@@ -274,21 +279,21 @@ def display_question_input():
             else:
                 st.error("質問を入力してください。")
 
-def display_final_answer_submission(cursor, conn):
+def display_final_answer_submission():
     st.subheader("最終回答の提出")
     final_answer = st.text_input("あなたの最終回答を入力してください:", key="final_answer")
     if st.button("回答を送信する", key="submit_final_answer"):
         if final_answer.strip():
-            result = check_final_answer_via_api(
-                final_answer.strip(),
-                st.session_state.current_problem["answer"].strip()
-            )
-            cursor.execute(
-                "INSERT INTO chat_history (problem_id, user_id, question, answer) VALUES (?, ?, ?, ?)",
-                (st.session_state.current_problem_id, st.session_state.user_id, f"回答提出: {final_answer.strip()}", result)
-            )
-            conn.commit()
-            st.experimental_rerun()
+            threading.Thread(
+                target=process_final_answer,
+                args=(
+                    final_answer.strip(),
+                    st.session_state.current_problem_id,
+                    st.session_state.user_id,
+                    st.session_state.current_problem["answer"].strip()
+                )
+            ).start()
+            st.success("最終回答を送信しました。結果がチャット履歴に反映されるまでお待ちください。")
         else:
             st.error("回答を入力してください。")
 
@@ -318,7 +323,7 @@ def main():
             "answer": st.session_state.new_problem["answer"],
             "hint": st.session_state.new_problem["hint"]
         }
-        st.experimental_rerun()
+        st.rerun()
 
     # メインエリアの描画
     display_problem_area()
@@ -327,7 +332,7 @@ def main():
     st.markdown("---")
     display_question_input()
     st.markdown("---")
-    display_final_answer_submission(cursor, conn)
+    display_final_answer_submission()
 
     conn.close()
 
