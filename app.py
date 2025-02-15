@@ -79,7 +79,7 @@ def generate_problem():
         "あなたはウミガメのスープ、水平思考クイズの生成に長けたAIです。"
         "以下の条件を満たす水平思考クイズの問題を生成してください。\n"
         "1. 問題文は現実的な設定（例：レストラン、旅行、日常の出来事など）を背景にし、参加者が「YES」「NO」「関係ありません」で答えながら真相に迫る形式にすること。\n"
-        "2. 問題は理不尽すぎず、論理性を保ちながらも発想の転換が必要なひねりを含むものとする。\n"
+        "2. 問題は理不尽すぎず、論理性を保ちながらも少しの発想の転換が必要なひねりを含むものとする。\n"
         "3. 出力は、問題文、正解の要点、解答に近づくためのヒントを含むJSON形式で行い、キーは 'problem', 'answer', 'hint' とすること。\n"
         "【例】\n"
         "{\n"
@@ -88,6 +88,7 @@ def generate_problem():
         "  \"hint\": \"男はその過去の体験から味に敏感になっており、スープの味の微妙な違いが取り返しのつかない意味を持っていた。\"\n"
         "}\n"
         "上記の条件に沿った水平思考クイズを生成してください。"
+        "正解はある程度導きやすいものにしてください。"
     )
     messages = [{"role": "system", "content": system_prompt}]
     response_text = call_api(messages)
@@ -101,9 +102,10 @@ def generate_problem():
 
 def get_answer(problem_text, problem_answer, user_question):
     system_msg = (
-        "あなたは水平思考ゲームの回答者です。次の問題とその正解を把握しています。\n"
+        "あなたは水平思考ゲームの出題者です。次の問題とその正解を把握しています。\n"
         f"【問題】 {problem_text}\n【正解】 {problem_answer}\n"
-        "ユーザーからの質問に対して、必ず「はい」「いいえ」「わからない」のみで答えてください。"
+        "ユーザーからの質問に対して、「はい」「いいえ」「わからない」で答えてください。"
+        "もし、ユーザーの発言が正解に近い場合には、「正解」と答えてください。"
     )
     messages = [
         {"role": "system", "content": system_msg},
@@ -117,18 +119,6 @@ def get_answer(problem_text, problem_answer, user_question):
         return "わからない"
     except Exception:
         return "わからない"
-
-def check_final_answer_via_api(submitted, correct):
-    system_msg = (
-        "あなたはウミガメのスープ・水平思考クイズの審判です。"
-        "ユーザーの最終回答と正解を比較して、正解の場合は必ず「正解」、不正解の場合は必ず「不正解」とだけ答えてください。"
-    )
-    messages = [
-        {"role": "system", "content": system_msg},
-        {"role": "user", "content": f"正解は「{correct}」です。ユーザーの回答は「{submitted}」です。"}
-    ]
-    result = call_api(messages)
-    return result if result in ["正解", "不正解"] else "不正解"
 
 ########################################
 # バックグラウンド処理（非同期）
@@ -155,10 +145,6 @@ def process_regenerate():
         "hint": generated["hint"]
     }
     st.session_state.regenerate_done = True
-
-def process_final_answer(final_answer, problem_id, user_id, problem_answer):
-    result = check_final_answer_via_api(final_answer, problem_answer)
-    insert_chat_history(problem_id, user_id, f"回答提出: {final_answer}", result)
 
 ########################################
 # ユーザー登録画面（メインエリアに表示）
@@ -206,15 +192,31 @@ def display_problem_area():
     st.title("ウミガメのスープ・水平思考クイズ")
     st.header("【問題】")
     st.markdown(f"<div style='font-size:18px;'>{st.session_state.current_problem['problem']}</div>", unsafe_allow_html=True)
-    cols = st.columns(3)
+    cols = st.columns(4)
     with cols[0]:
         if st.button("問題を再生成する"):
             st.session_state.regenerate_done = False
-            threading.Thread(target=process_regenerate).start()
-            st.info("問題再生成中...")
+            # 同期的に再生成を実行（処理中はスピナー表示）
+            with st.spinner("問題再生成中..."):
+                process_regenerate()
+            st.session_state.current_problem_id = st.session_state.new_problem["id"]
+            st.session_state.current_problem = {
+                "problem": st.session_state.new_problem["problem"],
+                "answer": st.session_state.new_problem["answer"],
+                "hint": st.session_state.new_problem["hint"]
+            }
+            st.session_state.pop("new_problem", None)
+            st.rerun()
     with cols[1]:
         if st.button("降参する"):
             st.session_state.show_answer = True
+            # 降参時もチャット履歴に記録
+            insert_chat_history(
+                st.session_state.current_problem_id,
+                st.session_state.user_id,
+                "降参",
+                st.session_state.current_problem["answer"]
+            )
     with cols[2]:
         if st.button("ヒントを表示する"):
             st.session_state.show_hint = True
@@ -226,6 +228,16 @@ def display_problem_area():
                     st.session_state.current_problem["hint"]
                 )
                 st.session_state.hint_recorded = True
+    with cols[3]:
+        if st.button("正解を表示する"):
+            st.session_state.show_answer = True
+            # 正解表示時もチャット履歴に記録
+            insert_chat_history(
+                st.session_state.current_problem_id,
+                st.session_state.user_id,
+                "正解を表示",
+                st.session_state.current_problem["answer"]
+            )
 
     if st.session_state.get("show_answer"):
         st.markdown("<h3>【答え】</h3>", unsafe_allow_html=True)
@@ -276,24 +288,6 @@ def display_question_input():
             else:
                 st.error("質問を入力してください。")
 
-def display_final_answer_submission():
-    st.subheader("最終回答の提出")
-    final_answer = st.text_input("あなたの最終回答を入力してください:", key="final_answer")
-    if st.button("回答を送信する", key="submit_final_answer"):
-        if final_answer.strip():
-            threading.Thread(
-                target=process_final_answer,
-                args=(
-                    final_answer.strip(),
-                    st.session_state.current_problem_id,
-                    st.session_state.user_id,
-                    st.session_state.current_problem["answer"].strip()
-                )
-            ).start()
-            st.success("最終回答を送信しました。結果がチャット履歴に反映されるまでお待ちください。")
-        else:
-            st.error("回答を入力してください。")
-
 ########################################
 # メイン処理
 ########################################
@@ -318,6 +312,7 @@ def main():
             "answer": st.session_state.new_problem["answer"],
             "hint": st.session_state.new_problem["hint"]
         }
+        st.session_state.pop("new_problem", None)
         st.rerun()
 
     # メインエリアの描画
@@ -326,8 +321,6 @@ def main():
     display_chat_history(cursor)
     st.markdown("---")
     display_question_input()
-    st.markdown("---")
-    display_final_answer_submission()
 
     conn.close()
 
