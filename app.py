@@ -75,13 +75,21 @@ def call_api(messages, model="gpt-4-turbo"):
     return response.choices[0].message.content.strip()
 
 def generate_problem():
-    system_msg = (
+    system_prompt = (
         "あなたはウミガメのスープ、水平思考クイズの生成に長けたAIです。"
-        "創造的で興味深いウミガメのスープの問題を生成してください。"
-        "正解に辿り着くには、発想が必要なものが好ましいです。"
-        "出力は、問題文、答え、ヒントを含むJSON形式で、キーは 'problem', 'answer', 'hint' としてください。"
+        "以下の条件を満たす水平思考クイズの問題を生成してください。\n"
+        "1. 問題文は現実的な設定（例：レストラン、旅行、日常の出来事など）を背景にし、参加者が「YES」「NO」「関係ありません」で答えながら真相に迫る形式にすること。\n"
+        "2. 問題は理不尽すぎず、論理性を保ちながらも発想の転換が必要なひねりを含むものとする。\n"
+        "3. 出力は、問題文、正解の要点、解答に近づくためのヒントを含むJSON形式で行い、キーは 'problem', 'answer', 'hint' とすること。\n"
+        "【例】\n"
+        "{\n"
+        "  \"problem\": \"ある男が、とある海の見えるレストランで『ウミガメのスープ』を注文し、一口飲んだ後に自殺した。なぜでしょうか？\",\n"
+        "  \"answer\": \"男はかつて遭難し、生き延びるために仲間の肉を食べさせられた経験があり、レストランで本物のウミガメのスープの味と、自分がかつて食べた味の違いに気づいたことで絶望したため。\",\n"
+        "  \"hint\": \"男はその過去の体験から味に敏感になっており、スープの味の微妙な違いが取り返しのつかない意味を持っていた。\"\n"
+        "}\n"
+        "上記の条件に沿った水平思考クイズを生成してください。"
     )
-    messages = [{"role": "system", "content": system_msg}]
+    messages = [{"role": "system", "content": system_prompt}]
     response_text = call_api(messages)
     try:
         problem_data = json.loads(response_text)
@@ -149,39 +157,28 @@ def process_regenerate():
     st.session_state.regenerate_done = True
 
 def process_final_answer(final_answer, problem_id, user_id, problem_answer):
-    # 最終回答のチェック処理を実行し、結果をチャット履歴に登録
     result = check_final_answer_via_api(final_answer, problem_answer)
     insert_chat_history(problem_id, user_id, f"回答提出: {final_answer}", result)
 
 ########################################
-# UI描画関数
+# ユーザー登録画面（メインエリアに表示）
 ########################################
-def display_sidebar(cursor, conn):
-    st.sidebar.title("ユーザー登録＆操作説明")
-    if "user_id" not in st.session_state:
-        user_name = st.sidebar.text_input("名前を入力してください:")
-        if st.sidebar.button("登録"):
-            if not user_name.strip():
-                st.sidebar.error("名前を入力してください。")
-            else:
-                cursor.execute("INSERT INTO users (name) VALUES (?)", (user_name.strip(),))
-                conn.commit()
-                st.session_state.user_id = cursor.lastrowid
-                st.session_state.user_name = user_name.strip()
-                st.rerun()
-    else:
-        st.sidebar.info(f"ようこそ、{st.session_state.user_name}さん！")
-    st.sidebar.markdown("---")
-    st.sidebar.subheader("操作説明")
-    st.sidebar.markdown(
-        """
-        - 質問を入力し「送信」を押すと、回答（「はい」「いいえ」「わからない」）が生成され、チャット履歴に表示されます。  
-        - 「ヒントを表示する」ボタンでヒントが表示され、チャット履歴に記録されます。  
-        - 「降参する」ボタンで答えが表示されます。  
-        - 最終回答を入力して提出すると、正解か不正解かの判定が OpenAI API により行われます。  
-        """
-    )
+def display_name_input(cursor, conn):
+    st.title("ユーザー登録")
+    user_name = st.text_input("名前を入力してください:")
+    if st.button("登録"):
+        if not user_name.strip():
+            st.error("名前を入力してください。")
+        else:
+            cursor.execute("INSERT INTO users (name) VALUES (?)", (user_name.strip(),))
+            conn.commit()
+            st.session_state.user_id = cursor.lastrowid
+            st.session_state.user_name = user_name.strip()
+            st.rerun()
 
+########################################
+# 問題・チャット関連処理
+########################################
 def get_current_problem(cursor, conn):
     if "current_problem_id" not in st.session_state:
         cursor.execute("SELECT id, problem, answer, hint FROM problems ORDER BY created_at DESC LIMIT 1")
@@ -305,11 +302,9 @@ def main():
     conn = init_db()
     cursor = conn.cursor()
 
-    # サイドバー：ユーザー登録と説明
-    display_sidebar(cursor, conn)
-
+    # ユーザー登録：ユーザー未登録なら登録画面を表示し、登録完了後は再描画
     if "user_id" not in st.session_state:
-        st.warning("サイドバーからユーザー登録をしてください。")
+        display_name_input(cursor, conn)
         st.stop()
 
     # 現在の問題の取得または生成
